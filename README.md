@@ -1,4 +1,4 @@
-# AI Integrated Missing Person Finder
+# AI Integrated Missing Person Finder Website
 
 ## Project Setup
 
