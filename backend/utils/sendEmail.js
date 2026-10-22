@@ -7,7 +7,7 @@ const sendEmail = async (options) => {
   // For production, use SendGrid, Mailgun, or AWS SES
   // For this project, we can use a Gmail account or Ethereal (fake)
   
-  // NOTE: If using Gmail, you need "App Password" enabled.
+  // NOTE - If using Gmail, you need "App Password" enabled.
   // For now, I'll log the email to console if no credentials are provided
   
   const transporter = nodemailer.createTransport({
