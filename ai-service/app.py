@@ -201,7 +201,7 @@ def _face_boxes_from_path(img_path):
         # fall through to OpenCV fallback
         traceback.print_exc()
 
-    # Try MediaPipe if available (lighter-weight, often more accurate than Haar cascades)
+    # Try MediaPipe if available (lighter weight, often more accurate than Haar cascades)
     try:
         if HAS_MEDIAPIPE and mp_face is not None:
             with mp_face.FaceDetection(model_selection=1, min_detection_confidence=0.4) as detector:
