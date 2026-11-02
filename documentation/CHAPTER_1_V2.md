@@ -200,7 +200,7 @@ The project timeline was structured to ensure all phases were completed efficien
 | **6** | **Testing & Debugging** | Week 13-14 | Bug Reports, Optimized Code |
 | **7** | **Documentation & Final Presentation** | Week 15 | Final Report, Slide Deck |
 
-## 1.11 Project Budget
+## 1.11 Project Budget estimated 
 
 While this is an academic project, a hypothetical budget for a real-world pilot deployment has been estimated.
 
