@@ -230,7 +230,7 @@ async function listActivityLogs(filterFn) {
   const logs = await listCollection('activity_logs');
   return typeof filterFn === 'function' ? logs.filter(filterFn) : logs;
 }
-
+// module exports
 module.exports = {
   createUser,
   updateUser,
