@@ -1,9 +1,11 @@
 flask==3.0.3
 flask-cors==4.0.1
-opencv-python-headless
-numpy
+# numpy must stay below 2 for the pinned mediapipe build to import; otherwise the
+# detector silently falls back to the weak Haar cascade.
+numpy==1.26.4
+opencv-python-headless==4.10.0.84
+mediapipe==0.10.14
 requests==2.32.3
 gunicorn==22.0.0
-mediapipe
 # Optional: faiss-cpu can be installed for faster vector search. Install only on supported Linux platforms.
 # faiss-cpu

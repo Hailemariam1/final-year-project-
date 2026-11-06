@@ -10,8 +10,10 @@ const sendEmail = require('../utils/sendEmail');
 const store = require('../services/firebaseStore');
 const admin = require('firebase-admin');
 
-const SYSTEM_ADMIN_EMAIL = 'habtetadilo@gmail.com';
-const SYSTEM_ADMIN_PASSWORD = 'LaybreryA@2hailehshssbvs';
+// System-admin bootstrap credentials come from the environment so that no secret is
+// committed to the repository. An existing account's password is never rewritten.
+const SYSTEM_ADMIN_EMAIL = String(process.env.SYSTEM_ADMIN_EMAIL || '').trim().toLowerCase();
+const SYSTEM_ADMIN_PASSWORD = String(process.env.SYSTEM_ADMIN_PASSWORD || '');
 
 function getRedirectPath(role) {
   if (role === 'admin') return '/system_admin/index.html';
@@ -76,15 +78,41 @@ async function findBestGoogleUser(normalizedEmail, googleUid) {
   return matches[0];
 }
 
-async function ensureSystemAdminAccount() {
-  const adminEmail = SYSTEM_ADMIN_EMAIL.toLowerCase();
-  const existing = await store.findUserByEmail(adminEmail);
-  const passwordHash = await bcrypt.hash(SYSTEM_ADMIN_PASSWORD, 10);
+// Runs at most once per process and never blocks sign-in if it fails: previously this
+// ran on EVERY login request, re-hashing bcrypt and resetting the admin password each
+// time, so a transient Firebase error turned into a failed login for everyone.
+let systemAdminBootstrap = null;
 
-  if (!existing) {
+function ensureSystemAdminAccount() {
+  if (!SYSTEM_ADMIN_EMAIL) return Promise.resolve();
+  if (systemAdminBootstrap) return systemAdminBootstrap;
+
+  systemAdminBootstrap = (async () => {
+    const existing = await store.findUserByEmail(SYSTEM_ADMIN_EMAIL);
+
+    if (existing) {
+      // Repair the role/verification flags only; leave the stored password untouched.
+      if (existing.role !== 'admin' || existing.isVerified !== true) {
+        await store.updateUser(existing._id, {
+          role: 'admin',
+          isVerified: true,
+          verificationStatus: 'approved',
+          verificationRejectionReason: ''
+        });
+        console.log('[auth] Repaired system admin flags for', SYSTEM_ADMIN_EMAIL);
+      }
+      return;
+    }
+
+    if (!SYSTEM_ADMIN_PASSWORD) {
+      console.warn('[auth] SYSTEM_ADMIN_EMAIL is set but SYSTEM_ADMIN_PASSWORD is missing; skipping system admin bootstrap.');
+      return;
+    }
+
+    const passwordHash = await bcrypt.hash(SYSTEM_ADMIN_PASSWORD, 10);
     await store.createUser({
       username: 'System Admin',
-      email: adminEmail,
+      email: SYSTEM_ADMIN_EMAIL,
       password: passwordHash,
       role: 'admin',
       organizationName: 'System Administration',
@@ -93,16 +121,14 @@ async function ensureSystemAdminAccount() {
       verificationStatus: 'approved',
       verificationRejectionReason: ''
     });
-    return;
-  }
-
-  await store.updateUser(existing._id, {
-    password: passwordHash,
-    role: 'admin',
-    isVerified: true,
-    verificationStatus: 'approved',
-    verificationRejectionReason: ''
+    console.log('[auth] System admin account created:', SYSTEM_ADMIN_EMAIL);
+  })().catch((err) => {
+    // Allow a later request to retry, but never fail the caller.
+    systemAdminBootstrap = null;
+    console.error('[auth] System admin bootstrap failed (sign-in continues):', err.message);
   });
+
+  return systemAdminBootstrap;
 }
 
 const upload = multer({
@@ -288,6 +314,8 @@ router.post('/google-public', async (req, res) => {
       });
     }
 
+    console.log('[auth] Google ID token verified:', normalizedEmail, '| uid:', decoded.uid);
+
     const existing = await findBestGoogleUser(normalizedEmail, decoded.uid);
     if (existing && isRestrictedRole(existing.role)) {
       return res.status(403).json({ msg: 'This email belongs to a restricted account. Google sign-in is only for public users.' });
@@ -355,11 +383,23 @@ router.post('/google-public', async (req, res) => {
       email: user.email
     });
   } catch (err) {
-    console.error(err);
-    if (String(err && err.message || '').includes('Firebase ID token has expired')) {
+    const code = String((err && err.code) || '');
+    const message = String((err && err.message) || '');
+    console.error('[auth] Google sign-in failed:', code || '(no code)', message);
+
+    if (code === 'auth/id-token-expired' || message.includes('Firebase ID token has expired')) {
       return res.status(401).json({ msg: 'Google sign-in expired. Please try again.' });
     }
-    return res.status(500).json({ msg: err.message || 'Google sign-in failed' });
+
+    if (code === 'auth/argument-error' || code === 'auth/invalid-id-token' || message.includes('invalid ID token')) {
+      return res.status(401).json({ msg: 'Google sign-in token was rejected. Please try again.' });
+    }
+
+    if (message.includes('Missing Firebase env vars') || code.startsWith('app/')) {
+      return res.status(503).json({ msg: 'Google sign-in is not configured correctly on the server. Please contact the administrator.' });
+    }
+
+    return res.status(500).json({ msg: message || 'Google sign-in failed' });
   }
 });
 
@@ -372,10 +412,18 @@ router.post('/login', async (req, res) => {
     const normalizedEmail = normalizeEmail(email);
 
     const user = await store.findUserByEmail(normalizedEmail);
-    if (!user) return res.status(400).json({ msg: 'Invalid Credentials' });
+    if (!user) {
+      console.warn('[auth] login failed (unknown email):', normalizedEmail);
+      return res.status(400).json({ msg: 'Invalid Credentials' });
+    }
 
     const ok = await bcrypt.compare(password, user.password || '');
-    if (!ok) return res.status(400).json({ msg: 'Invalid Credentials' });
+    if (!ok) {
+      console.warn('[auth] login failed (bad password):', normalizedEmail);
+      return res.status(400).json({ msg: 'Invalid Credentials' });
+    }
+
+    console.log('[auth] login ok:', normalizedEmail, '| role:', user.role);
 
     const verificationStatus = user.verificationStatus || (user.isVerified ? 'approved' : 'pending');
     if ((user.role === 'law_enforcement' || user.role === 'authorized_org') && verificationStatus !== 'approved') {
@@ -571,7 +619,7 @@ router.post('/forgotpassword', async (req, res) => {
 
     await store.updateUser(user._id, { resetPasswordToken, resetPasswordExpire });
 
-    const frontendBase = process.env.FRONTEND_URL || 'https://missingpersonfinder-beryl.vercel.app';
+    const frontendBase = (process.env.FRONTEND_URL || 'https://final-year-project-frontend-silk.vercel.app').replace(/\/+$/, '');
     const resetUrl = `${frontendBase}/reset_password.html?token=${resetToken}`;
 
     try {

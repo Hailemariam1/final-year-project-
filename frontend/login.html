@@ -139,6 +139,11 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
     <script src="public-google-auth.js"></script>
     <script>
+        // A valid session already exists? Skip the login screen instead of stranding the user here.
+        if (isLoggedIn()) {
+            window.location.replace(getDashboardPath(getUserRole()));
+        }
+
         document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const btn = document.getElementById('submit-btn');
@@ -181,7 +186,7 @@
                     email,
                     password
                 });
-                localStorage.setItem('token', data.token);
+                setAuthToken(data.token);
                 showToast(t.auth_login_success || 'Login successful!', 'success');
                 setTimeout(() => {
                     window.location.href = data.redirectPath || '/user/dashboard.html';

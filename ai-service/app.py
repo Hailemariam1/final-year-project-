@@ -23,7 +23,7 @@ faiss_meta = []
 FAISS_INDEX_PATH = 'faiss.index'
 FAISS_META_PATH = 'faiss_meta.json'
 try:
-    import faiss
+    import faiss  # type: ignore  # optional: faster vector search, see requirements.txt
     HAS_FAISS = True
 except Exception:
     HAS_FAISS = False
@@ -39,7 +39,7 @@ def _init_optional_models():
         return
 
     try:
-        from insightface.app import FaceAnalysis
+        from insightface.app import FaceAnalysis  # type: ignore  # optional: best accuracy, not installed by default
         face_app = FaceAnalysis(allowed_modules=['detection', 'recognition'])
         face_app.prepare(ctx_id=-1, det_size=(640, 640))
         HAS_INSIGHTFACE = True
@@ -48,7 +48,7 @@ def _init_optional_models():
         face_app = None
 
     try:
-        import mediapipe as mp
+        import mediapipe as mp  # type: ignore  # optional at runtime, pinned in requirements.txt
         HAS_MEDIAPIPE = True
         mp_face = mp.solutions.face_detection
     except Exception:
@@ -88,8 +88,36 @@ CONTRAST_WARN = 20.0
 CONTRAST_REJECT_EXTREME = 3.0
 
 
+def _load_haar_cascade():
+    """Return a loaded Haar frontal-face cascade, or None when this build lacks it.
+
+    OpenCV 5.x ships without the legacy bundled cascade, and an empty classifier makes
+    detectMultiScale() raise an opaque assertion failure. Detect that up front instead.
+    """
+    try:
+        base = cv2.data.haarcascades
+    except Exception:
+        return None
+
+    try:
+        path = os.path.join(base, 'haarcascade_frontalface_default.xml')
+        if not os.path.exists(path):
+            return None
+        cascade = cv2.CascadeClassifier(path)
+        return None if cascade.empty() else cascade
+    except Exception:
+        return None
+
+
+def _detector_available():
+    return bool(HAS_INSIGHTFACE or HAS_MEDIAPIPE or _load_haar_cascade() is not None)
+
+
 def _temp_file_path(prefix, filename):
-    return f"{prefix}_{uuid4().hex}_{filename or 'upload.jpg'}"
+    # Keep only a safe basename: uploaded names may contain path separators or spaces.
+    safe_name = os.path.basename(str(filename or 'upload.jpg')).strip().replace(' ', '_')
+    safe_name = ''.join(ch for ch in safe_name if ch.isalnum() or ch in '._-') or 'upload.jpg'
+    return f"{prefix}_{uuid4().hex}_{safe_name}"
 
 
 def _cleanup_file(path):
@@ -223,7 +251,12 @@ def _face_boxes_from_path(img_path):
         traceback.print_exc()
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+    cascade = _load_haar_cascade()
+    if cascade is None:
+        raise RuntimeError(
+            'No face detector is available: the bundled Haar cascade could not be loaded '
+            f'(opencv={cv2.__version__}). Pin opencv-python-headless to 4.10.x or install mediapipe.'
+        )
     boxes = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(30, 30))
     return img, boxes
 
@@ -349,7 +382,7 @@ def index_search():
                 sim = _cosine_similarity(vec, np.array(other_emb, dtype=np.float32))
                 candidates.append({'id': it.get('id'), 'similarity': float(sim)})
 
-            candidates.sort((lambda a, b: -1 if a['similarity'] > b['similarity'] else 1))
+            candidates.sort(key=lambda item: item['similarity'], reverse=True)
             return jsonify({'results': candidates[:k]})
     except Exception as e:
         traceback.print_exc()
@@ -362,7 +395,19 @@ def index_search():
 
 @app.route('/health', methods=['GET'])
 def health():
-    return jsonify({"status": "AI Service Operational"})
+    # Warm the optional models so the backend's readiness probe doubles as a warm-up on
+    # Render's free tier, where the service spins down when idle.
+    _init_optional_models()
+    return jsonify({
+        "status": "AI Service Operational",
+        "insightface": bool(HAS_INSIGHTFACE),
+        "mediapipe": bool(HAS_MEDIAPIPE),
+        "faiss": bool(HAS_FAISS),
+        "haar_cascade": _load_haar_cascade() is not None,
+        "detector_available": _detector_available(),
+        "opencv": cv2.__version__,
+        "numpy": np.__version__
+    })
 
 
 @app.route('/', methods=['GET'])
@@ -447,6 +492,17 @@ def verify_face():
 @app.route('/validate-face', methods=['POST'])
 def validate_face():
     _init_optional_models()
+
+    # Fail with a diagnosable message instead of a 500 traceback when the image has no
+    # usable detector (e.g. an OpenCV 5 build without the bundled Haar cascade).
+    if not _detector_available():
+        return jsonify({
+            'error': 'No face detector is available on the AI service. Install mediapipe or pin opencv-python-headless to 4.10.x.',
+            'detector': 'none',
+            'opencv': cv2.__version__,
+            'numpy': np.__version__
+        }), 503
+
     if 'image' not in request.files:
         return jsonify({"error": "No image provided"}), 400
     
@@ -612,7 +668,7 @@ def validate_id():
         return jsonify({"error": "No image provided"}), 400
     
     file = request.files['image']
-    temp_path = "temp_id_" + file.filename
+    temp_path = _temp_file_path("temp_id", file.filename)
     file.save(temp_path)
     
     try:
@@ -664,8 +720,13 @@ def validate_id():
             is_valid = False
         
         # Check 4: Try to detect face in the document (many IDs have photo)
-        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(30, 30))
+        faces = []
+        try:
+            face_cascade = _load_haar_cascade()
+            if face_cascade is not None:
+                faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(30, 30))
+        except Exception:
+            faces = []
         has_face = len(faces) > 0
         
         # Check 5: Color distribution — ID cards are not solid colors or pure photos

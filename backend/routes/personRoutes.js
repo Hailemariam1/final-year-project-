@@ -11,6 +11,9 @@ const store = require('../services/firebaseStore');
 const DEFAULT_AI_SERVICE_URL = 'https://final-year-project-0joz.onrender.com';
 const AI_SERVICE_URL = (process.env.AI_SERVICE_URL || DEFAULT_AI_SERVICE_URL).replace(/\/+$|^\s+|\s+$/g, '');
 
+// Only ever used when NODE_ENV is not "production" (local development).
+const LOCAL_AI_FALLBACK_URL = (process.env.LOCAL_AI_SERVICE_URL || 'http://127.0.0.1:5001').replace(/\/+$/, '');
+
 // Duplicate detection thresholds
 const DUPLICATE_HIGH = 0.92; // auto-block
 const DUPLICATE_REVIEW = 0.85; // flag for human review
@@ -18,7 +21,7 @@ const DUPLICATE_PROBABLE = 0.80; // probable match to show
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5000000 },
+  limits: { fileSize: 10000000 }, // keep in sync with the 10MB check in the frontend
   fileFilter: function fileFilter(req, file, cb) {
     const ext = path.extname(file.originalname || '').toLowerCase();
     const allowedExt = ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.jfif'];
@@ -74,7 +77,34 @@ function cosineSimilarity(vecA, vecB) {
   return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB) || 1);
 }
 
-async function postImageToAi(endpoint, imageFile, timeout = 120000) {
+// Render's free tier spins the AI service down when idle. Wake it before each upload, but
+// cache the result briefly so a burst of requests does not pay a health round-trip each time.
+const AI_HEALTH_TTL_MS = 60000;
+let aiHealthCache = { checkedAt: 0, ok: false };
+
+async function ensureAiServiceAwake() {
+  const now = Date.now();
+  if (aiHealthCache.ok && now - aiHealthCache.checkedAt < AI_HEALTH_TTL_MS) return;
+
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await axios.get(`${AI_SERVICE_URL}/health`, { timeout: 60000 });
+      aiHealthCache = { checkedAt: Date.now(), ok: true };
+      console.log('[ai] AI service reachable at', AI_SERVICE_URL);
+      return;
+    } catch (error) {
+      lastError = error;
+      console.warn(`[ai] health check attempt ${attempt + 1} failed:`, error.message);
+      if (attempt < 1) await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  }
+
+  aiHealthCache = { checkedAt: Date.now(), ok: false };
+  throw lastError;
+}
+
+async function postImageToAi(endpoint, imageFile, timeout = 90000) {
   const createFormData = () => {
     const formData = new FormData();
     formData.append('image', imageFile.buffer, {
@@ -84,18 +114,7 @@ async function postImageToAi(endpoint, imageFile, timeout = 120000) {
     return formData;
   };
 
-  let healthError;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      await axios.get(`${AI_SERVICE_URL}/health`, { timeout: 120000 });
-      healthError = null;
-      break;
-    } catch (error) {
-      healthError = error;
-      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 2000));
-    }
-  }
-  if (healthError) throw healthError;
+  await ensureAiServiceAwake();
   let lastError;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
@@ -156,7 +175,7 @@ async function validateHumanFaceStrict(imageFile) {
         filename: imageFile.originalname || `image${path.extname(imageFile.originalname || '.jpg')}`,
         contentType: imageFile.mimetype
       });
-      const fallbackResp = await axios.post('http://127.0.0.1:5001/validate-face', fallbackForm, {
+      const fallbackResp = await axios.post(`${LOCAL_AI_FALLBACK_URL}/validate-face`, fallbackForm, {
         headers: { ...fallbackForm.getHeaders() },
         timeout: 60000
       });
@@ -243,7 +262,7 @@ async function validateIdImage(idFile) {
         filename: idFile.originalname || `id${path.extname(idFile.originalname || '.jpg')}`,
         contentType: idFile.mimetype
       });
-      const fallbackResp = await axios.post('http://127.0.0.1:5001/validate-id', fallbackForm, {
+      const fallbackResp = await axios.post(`${LOCAL_AI_FALLBACK_URL}/validate-id`, fallbackForm, {
         headers: { ...fallbackForm.getHeaders() },
         timeout: 60000
       });
@@ -409,7 +428,15 @@ async function generateFaceEmbeddingFromFile(file) {
   } catch (primaryError) {
     if (process.env.NODE_ENV !== 'production') {
       try {
-      const fallbackResponse = await axios.post('http://127.0.0.1:5001/generate-embedding', formData, requestConfig);
+      const fallbackForm = new FormData();
+      fallbackForm.append('image', file.buffer, {
+        filename: file.originalname || `image${path.extname(file.originalname || '.jpg')}`,
+        contentType: file.mimetype
+      });
+      const fallbackResponse = await axios.post(`${LOCAL_AI_FALLBACK_URL}/generate-embedding`, fallbackForm, {
+        headers: { ...fallbackForm.getHeaders() },
+        timeout: 60000
+      });
       const fallbackEmbedding = fallbackResponse?.data?.embedding;
       if (!Array.isArray(fallbackEmbedding) || !fallbackEmbedding.length) {
         throw new Error('Fallback AI embedding service returned no embedding.');
@@ -673,6 +700,7 @@ router.post('/search/image', handleImageUpload, async (req, res) => {
     });
   } catch (err) {
     console.error(err);
+    console.error('[search/image] failed:', err?.message || err);
     const upstreamError = err?.response?.data?.error || err?.response?.data?.msg;
     const isAiFailure = Boolean(upstreamError) ||
       String(err?.code || '').includes('TIMEOUT') ||
@@ -683,6 +711,23 @@ router.post('/search/image', handleImageUpload, async (req, res) => {
         ? 'The AI image-search service is unavailable. Please try again in a moment.'
         : (err.message || 'Image search failed.')
     });
+  }
+});
+
+// Admin endpoint: list flagged potential duplicates for review.
+// Must be registered before '/:id', otherwise Express treats "flagged-duplicates" as an id.
+router.get('/flagged-duplicates', auth(), async (req, res) => {
+  try {
+    // only admin or law enforcement can review flags
+    if (!['admin', 'law_enforcement'].includes(req.user.role)) {
+      return res.status(403).json({ msg: 'Not authorized' });
+    }
+
+    const flagged = await store.listPeople((p) => p.flaggedDuplicate === true);
+    return res.json({ total: flagged.length, items: flagged });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ msg: 'Server Error' });
   }
 });
 
@@ -808,15 +853,7 @@ router.post('/', [auth(), handleReportUploads], async (req, res) => {
       let flaggedDuplicateInfo = null;
 
       try {
-        const formData = new FormData();
-        formData.append('image', imageFile.buffer, {
-          filename: imageFile.originalname || `image${path.extname(imageFile.originalname || '.jpg')}`,
-          contentType: imageFile.mimetype
-        });
-
-        const aiResponse = await axios.post(`${AI_SERVICE_URL}/generate-embedding`, formData, {
-          headers: { ...formData.getHeaders() }
-        });
+        const aiResponse = await postImageToAi('/generate-embedding', imageFile);
 
         if (Array.isArray(aiResponse.data.embedding)) {
           // normalize embeddings (defensive)
@@ -889,7 +926,7 @@ router.post('/', [auth(), handleReportUploads], async (req, res) => {
           }
         }
       } catch (aiError) {
-        console.error('AI Service Error:', aiError.message);
+        console.error('AI Service Error:', aiError?.response?.data?.error || aiError.message);
       }
 
       const image = await store.createFile({
@@ -1070,22 +1107,6 @@ router.put('/:id', auth(), async (req, res) => {
     });
 
     return res.json(updated);
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ msg: 'Server Error' });
-  }
-});
-
-// Admin endpoint: list flagged potential duplicates for review
-router.get('/flagged-duplicates', auth(), async (req, res) => {
-  try {
-    // only admin or law enforcement can review flags
-    if (!['admin', 'law_enforcement'].includes(req.user.role)) {
-      return res.status(403).json({ msg: 'Not authorized' });
-    }
-
-    const flagged = await store.listPeople((p) => p.flaggedDuplicate === true);
-    return res.json({ total: flagged.length, items: flagged });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ msg: 'Server Error' });

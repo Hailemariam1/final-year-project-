@@ -16,6 +16,10 @@
         return !!value && !String(value).includes('REPLACE_WITH_');
     }
 
+    function hasFirebaseSdk() {
+        return !!(window.firebase && window.firebase.initializeApp);
+    }
+
     function isFirebaseConfigured() {
         return [
             FIREBASE_WEB_CONFIG.apiKey,
@@ -26,7 +30,7 @@
     }
 
     function ensureFirebaseInitialized() {
-        if (!window.firebase || !window.firebase.initializeApp) {
+        if (!hasFirebaseSdk()) {
             throw new Error('Firebase client SDK is not loaded.');
         }
 
@@ -42,6 +46,15 @@
         }
 
         return window.firebase;
+    }
+
+    /** Where to send the user after a successful Google sign-in. */
+    function resolveDestination(data) {
+        if (data && data.redirectPath) return data.redirectPath;
+        if (typeof window.getDashboardPath === 'function') {
+            return window.getDashboardPath((data && data.role) || null);
+        }
+        return '/index.html';
     }
 
     async function signInPublicUserWithGoogle() {
@@ -97,7 +110,15 @@
             throw new Error(data.msg || data.error || 'Google sign-in failed');
         }
 
-        if (data.token) {
+        if (!data.token) {
+            throw new Error('Google sign-in succeeded but no session token was returned. Please try again.');
+        }
+
+        // Validate the token shape before storing it so the app can never end up
+        // "logged in" with an unusable session.
+        if (typeof window.setAuthToken === 'function') {
+            window.setAuthToken(data.token);
+        } else {
             localStorage.setItem('token', data.token);
         }
 
@@ -131,13 +152,17 @@
                 }
 
                 const data = await signInPublicUserWithGoogle();
-                if (!data) return;
+                if (!data) {
+                    // A full-page redirect to Google is in progress; keep the loading state.
+                    btn.textContent = 'Redirecting to Google...';
+                    return;
+                }
                 if (typeof window.showToast === 'function') {
                     window.showToast(successText, 'success');
                 }
 
                 window.setTimeout(() => {
-                    window.location.href = '/index.html';
+                    window.location.href = resolveDestination(data);
                 }, 700);
             } catch (err) {
                 const message = err.code ? `${err.code}: ${err.message}` : (err.message || 'Google sign-in failed');
@@ -217,12 +242,16 @@
     injectStyles();
 
     window.addEventListener('load', async () => {
+        // Only finish a redirect sign-in when Firebase is actually available on this page,
+        // otherwise every non-auth page would surface a spurious error toast.
+        if (!hasFirebaseSdk() || !isFirebaseConfigured()) return;
+
         try {
             const result = await completeGoogleRedirectSignIn();
             if (result && typeof window.showToast === 'function') {
                 window.showToast('Google sign-in successful!', 'success');
                 window.setTimeout(() => {
-                    window.location.href = '/index.html';
+                    window.location.href = resolveDestination(result);
                 }, 700);
             }
         } catch (err) {

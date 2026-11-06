@@ -21,10 +21,27 @@ const PUBLIC_PATHS_FOR_GUEST = new Set([
 let notificationPollTimer = null;
 
 // --- Auth Utils ---
+function base64UrlDecodeToJson(segment) {
+    if (!segment) return null;
+    try {
+        // JWT segments are base64url: '-' and '_' replace '+' and '/', and the padding
+        // is stripped. Plain atob() throws on both, which is why every token used to be
+        // unreadable and authenticated users were bounced back to /login.html.
+        let normalized = String(segment).replace(/-/g, '+').replace(/_/g, '/');
+        while (normalized.length % 4) normalized += '=';
+        const binary = atob(normalized);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+        return JSON.parse(new TextDecoder('utf-8').decode(bytes));
+    } catch (e) {
+        return null;
+    }
+}
+
 function parseTokenPayload(token) {
     if (!token) return null;
     try {
-        return JSON.parse(atob(token.split('.')[1]));
+        return base64UrlDecodeToJson(String(token).split('.')[1]);
     } catch (e) {
         return null;
     }
@@ -32,9 +49,27 @@ function parseTokenPayload(token) {
 
 function isTokenExpired(token) {
     const payload = parseTokenPayload(token);
-    if (!payload || !payload.exp) return false;
+    // A token we cannot decode is not a usable session; treat it as expired so it is dropped.
+    if (!payload) return true;
+    if (!payload.exp) return false;
     const nowInSeconds = Math.floor(Date.now() / 1000);
     return nowInSeconds >= payload.exp;
+}
+
+function setAuthToken(token) {
+    if (!token || typeof token !== 'string' || String(token).split('.').length !== 3) {
+        throw new Error('Sign-in succeeded but the server did not return a valid authentication token.');
+    }
+    localStorage.setItem('token', token);
+    return token;
+}
+
+function clearAuthToken() {
+    try {
+        localStorage.removeItem('token');
+    } catch (e) {
+        /* localStorage can be unavailable (private browsing); nothing else to clear */
+    }
 }
 
 function getToken() {
@@ -111,8 +146,16 @@ function togglePasswordVisibility(inputId, iconId) {
 }
 
 function logout() {
-    localStorage.removeItem('token');
-    window.location.href = '/index.html';
+    clearAuthToken();
+    stopNotificationPolling();
+    try {
+        if (window.firebase && window.firebase.auth) {
+            window.firebase.auth().signOut().catch(() => {});
+        }
+    } catch (e) {
+        /* Firebase SDK is not loaded on every page */
+    }
+    window.location.href = '/login.html';
 }
 
 async function apiCall(endpoint, method = 'GET', body = null, isFormData = false) {
@@ -127,7 +170,13 @@ async function apiCall(endpoint, method = 'GET', body = null, isFormData = false
         headers['Content-Type'] = 'application/json';
     }
 
+    // Cap the wait so a cold-render AI service surfaces as a clear timeout instead of
+    // an indefinitely spinning button.
+    const timeoutMs = 150000;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     const config = {
+        signal: controller.signal,
         method,
         headers,
     };
@@ -138,7 +187,18 @@ async function apiCall(endpoint, method = 'GET', body = null, isFormData = false
         if (isFormData) delete headers['Content-Type']; 
     }
 
-    const res = await fetch(`${API_URL}${endpoint}`, config);
+    let res;
+    try {
+        res = await fetch(`${API_URL}${endpoint}`, config);
+    } catch (fetchError) {
+        clearTimeout(timeoutId);
+        const aborted = fetchError && fetchError.name === 'AbortError';
+        const error = new Error(aborted
+            ? 'The request timed out. The AI service may still be waking up - please try again in a moment.'
+            : 'Could not reach the server. Please check your connection and try again.');
+        error.status = aborted ? 504 : 0;
+        throw error;
+    }
     const raw = await res.text();
     let data = {};
 
@@ -156,7 +216,7 @@ async function apiCall(endpoint, method = 'GET', body = null, isFormData = false
         error.payload = data;
 
         if (res.status === 401) {
-            localStorage.removeItem('token');
+            clearAuthToken();
             stopNotificationPolling();
 
             const path = decodeURIComponent(window.location.pathname || '/').replace(/^\/+|\/+$/g, '');

@@ -1110,7 +1110,7 @@
                     return;
                 }
 
-                localStorage.setItem('token', data.token);
+                setAuthToken(data.token);
                 showToast(getLocalText('auth_register_success', 'Account created successfully!'), 'success');
                 setTimeout(() => {
                     window.location.href = data.redirectPath || '/user/dashboard.html';

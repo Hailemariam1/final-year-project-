@@ -23,6 +23,11 @@ services:
         value: https://final-year-project-frontend-silk.vercel.app
       - key: AI_SERVICE_URL
         value: https://final-year-project-0joz.onrender.com
+      # System admin bootstrap (set the values in the Render dashboard)
+      - key: SYSTEM_ADMIN_EMAIL
+        sync: false
+      - key: SYSTEM_ADMIN_PASSWORD
+        sync: false
 
   # AI Service (Python)
   - type: web
@@ -30,7 +35,8 @@ services:
     env: python
     rootDir: ai-service
     buildCommand: pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
-    startCommand: gunicorn --bind 0.0.0.0:$PORT app:app
+    # The default 30s gunicorn timeout kills face-model warm-up requests.
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --timeout 300 --workers 1 --threads 4 --access-logfile - app:app
     envVars:
       - key: PYTHON_VERSION
         value: 3.10.13
