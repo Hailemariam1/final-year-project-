@@ -74,6 +74,33 @@ function cosineSimilarity(vecA, vecB) {
   return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB) || 1);
 }
 
+async function postImageToAi(endpoint, imageFile, timeout = 120000) {
+  const createFormData = () => {
+    const formData = new FormData();
+    formData.append('image', imageFile.buffer, {
+      filename: imageFile.originalname || `image${path.extname(imageFile.originalname || '.jpg')}`,
+      contentType: imageFile.mimetype
+    });
+    return formData;
+  };
+
+  await axios.get(`${AI_SERVICE_URL}/health`, { timeout: 30000 });
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const formData = createFormData();
+      return await axios.post(`${AI_SERVICE_URL}${endpoint}`, formData, {
+        headers: { ...formData.getHeaders() },
+        timeout
+      });
+    } catch (error) {
+      lastError = error;
+      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+  }
+  throw lastError;
+}
+
 async function validateHumanFaceStrict(imageFile) {
   if (!AI_SERVICE_URL) {
     return {
@@ -84,17 +111,7 @@ async function validateHumanFaceStrict(imageFile) {
   }
 
   try {
-    const formData = new FormData();
-    formData.append('image', imageFile.buffer, {
-      filename: imageFile.originalname || `image${path.extname(imageFile.originalname || '.jpg')}`,
-      contentType: imageFile.mimetype
-    });
-
-    const requestConfig = {
-      headers: { ...formData.getHeaders() },
-      timeout: 120000
-    };
-    const aiResponse = await axios.post(`${AI_SERVICE_URL}/validate-face`, formData, requestConfig);
+    const aiResponse = await postImageToAi('/validate-face', imageFile);
 
     const result = aiResponse?.data || {};
     if (!result.is_human_face) {
@@ -371,19 +388,8 @@ async function generateFaceEmbeddingFromFile(file) {
     throw new Error('AI face verification service is not configured.');
   }
 
-  const formData = new FormData();
-  formData.append('image', file.buffer, {
-    filename: file.originalname || `image${path.extname(file.originalname || '.jpg')}`,
-    contentType: file.mimetype
-  });
-
-  const requestConfig = {
-    headers: { ...formData.getHeaders() },
-    timeout: 120000
-  };
-
   try {
-    const aiResponse = await axios.post(`${AI_SERVICE_URL}/generate-embedding`, formData, requestConfig);
+    const aiResponse = await postImageToAi('/generate-embedding', file);
     const embedding = aiResponse?.data?.embedding;
     if (!Array.isArray(embedding) || !embedding.length) {
       throw new Error('Failed to generate embedding for the uploaded image.');
