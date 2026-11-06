@@ -274,10 +274,14 @@ router.post('/google-public', async (req, res) => {
 
     const decoded = await admin.auth().verifyIdToken(idToken, true);
 
-    const firebaseUser = decoded.email
-      ? null
-      : await admin.auth().getUser(decoded.uid);
-    const normalizedEmail = normalizeEmail(decoded.email || firebaseUser?.email);
+    const firebaseUser = await admin.auth().getUser(decoded.uid);
+    const tokenEmail = normalizeEmail(decoded.email);
+    const verifiedEmail = normalizeEmail(firebaseUser.email);
+    const submittedEmail = normalizeEmail(req.body.email);
+    const normalizedEmail = verifiedEmail || tokenEmail;
+    if (submittedEmail && verifiedEmail && submittedEmail !== verifiedEmail) {
+      return res.status(400).json({ msg: 'Google account verification failed. Please try again.' });
+    }
     if (!isGoogleAuthEmailAllowed(normalizedEmail)) {
       return res.status(400).json({
         msg: 'Google did not provide a valid email address. Ensure you signed in with a Google account and try again.'

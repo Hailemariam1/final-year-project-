@@ -71,7 +71,11 @@
         const response = await fetch(`${API_URL}/auth/google-public`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ idToken })
+            body: JSON.stringify({
+                idToken,
+                email: user.email || '',
+                displayName: user.displayName || ''
+            })
         });
 
         const raw = await response.text();
