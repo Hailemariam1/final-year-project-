@@ -52,13 +52,8 @@
         if (firebaseApp.auth && firebaseApp.auth.Auth && firebaseApp.auth.Auth.Persistence) {
             await auth.setPersistence(firebaseApp.auth.Auth.Persistence.LOCAL);
         }
-        const result = await auth.signInWithPopup(provider);
-        const user = result && result.user;
-        if (!user) {
-            throw new Error('Google sign-in failed.');
-        }
-
-        return exchangeGoogleUserForBackendToken(user);
+        await auth.signInWithRedirect(provider);
+        return null;
     }
 
     async function exchangeGoogleUserForBackendToken(user) {
@@ -100,7 +95,11 @@
     }
 
     async function completeGoogleRedirectSignIn() {
-        return null;
+        const firebaseApp = ensureFirebaseInitialized();
+        const result = await firebaseApp.auth().getRedirectResult();
+        const user = result && result.user;
+        if (!user) return null;
+        return exchangeGoogleUserForBackendToken(user);
     }
 
     function bindGoogleButton(buttonId, options = {}) {
@@ -122,6 +121,7 @@
                 }
 
                 const data = await signInPublicUserWithGoogle();
+                if (!data) return;
                 if (typeof window.showToast === 'function') {
                     window.showToast(successText, 'success');
                 }
