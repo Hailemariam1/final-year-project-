@@ -52,8 +52,18 @@
         if (firebaseApp.auth && firebaseApp.auth.Auth && firebaseApp.auth.Auth.Persistence) {
             await auth.setPersistence(firebaseApp.auth.Auth.Persistence.LOCAL);
         }
-        await auth.signInWithRedirect(provider);
-        return null;
+        try {
+            const result = await auth.signInWithPopup(provider);
+            const user = result && result.user;
+            if (!user) throw new Error('Google sign-in returned no user.');
+            return exchangeGoogleUserForBackendToken(user);
+        } catch (error) {
+            if (['auth/popup-blocked', 'auth/popup-closed-by-user', 'auth/cancelled-popup-request'].includes(error?.code)) {
+                await auth.signInWithRedirect(provider);
+                return null;
+            }
+            throw error;
+        }
     }
 
     async function exchangeGoogleUserForBackendToken(user) {
@@ -130,10 +140,11 @@
                     window.location.href = '/index.html';
                 }, 700);
             } catch (err) {
+                const message = err.code ? `${err.code}: ${err.message}` : (err.message || 'Google sign-in failed');
                 if (typeof window.showToast === 'function') {
-                    window.showToast(err.message || 'Google sign-in failed', 'error');
+                    window.showToast(message, 'error');
                 } else {
-                    window.alert(err.message || 'Google sign-in failed');
+                    window.alert(message);
                 }
                 btn.disabled = false;
                 btn.innerHTML = originalHtml;
@@ -215,10 +226,11 @@
                 }, 700);
             }
         } catch (err) {
+            const message = err.code ? `${err.code}: ${err.message}` : (err.message || 'Google sign-in failed');
             if (typeof window.showToast === 'function') {
-                window.showToast(err.message || 'Google sign-in failed', 'error');
+                window.showToast(message, 'error');
             } else {
-                window.alert(err.message || 'Google sign-in failed');
+                window.alert(message);
             }
         }
     });
