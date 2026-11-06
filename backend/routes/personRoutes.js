@@ -84,7 +84,18 @@ async function postImageToAi(endpoint, imageFile, timeout = 120000) {
     return formData;
   };
 
-  await axios.get(`${AI_SERVICE_URL}/health`, { timeout: 30000 });
+  let healthError;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await axios.get(`${AI_SERVICE_URL}/health`, { timeout: 120000 });
+      healthError = null;
+      break;
+    } catch (error) {
+      healthError = error;
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  }
+  if (healthError) throw healthError;
   let lastError;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
