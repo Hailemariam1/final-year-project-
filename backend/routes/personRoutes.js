@@ -90,10 +90,11 @@ async function validateHumanFaceStrict(imageFile) {
       contentType: imageFile.mimetype
     });
 
-    const aiResponse = await axios.post(`${AI_SERVICE_URL}/validate-face`, formData, {
+    const requestConfig = {
       headers: { ...formData.getHeaders() },
-      timeout: 60000
-    });
+      timeout: 120000
+    };
+    const aiResponse = await axios.post(`${AI_SERVICE_URL}/validate-face`, formData, requestConfig);
 
     const result = aiResponse?.data || {};
     if (!result.is_human_face) {
@@ -120,8 +121,8 @@ async function validateHumanFaceStrict(imageFile) {
       }
     };
   } catch (err) {
-    // Try a local fallback (developer may run ai-service locally on port 5001)
-    try {
+    if (process.env.NODE_ENV !== 'production') {
+      try {
       const fallbackForm = new FormData();
       fallbackForm.append('image', imageFile.buffer, {
         filename: imageFile.originalname || `image${path.extname(imageFile.originalname || '.jpg')}`,
@@ -155,14 +156,22 @@ async function validateHumanFaceStrict(imageFile) {
           detector: fallbackResult.detector || 'fallback'
         }
       };
-    } catch (err2) {
-      return {
-        ok: false,
-        status: 503,
-        msg: 'AI verification service is unavailable. Please try again shortly.',
-        error: err?.message || err2?.message || 'AI request failed'
-      };
+      } catch (err2) {
+        return {
+          ok: false,
+          status: 503,
+          msg: 'AI verification service is unavailable. Please try again shortly.',
+          error: err?.message || err2?.message || 'AI request failed'
+        };
+      }
     }
+
+    return {
+      ok: false,
+      status: 503,
+      msg: 'AI verification service is unavailable. Please try again shortly.',
+      error: err?.response?.data?.error || err?.message || 'AI request failed'
+    };
   }
 }
 
@@ -184,7 +193,7 @@ async function validateIdImage(idFile) {
 
     const aiResponse = await axios.post(`${AI_SERVICE_URL}/validate-id`, formData, {
       headers: { ...formData.getHeaders() },
-      timeout: 60000
+      timeout: 120000
     });
 
     const result = aiResponse?.data || {};
@@ -199,8 +208,8 @@ async function validateIdImage(idFile) {
 
     return { ok: true, ai: result };
   } catch (err) {
-    // Try local fallback to ai-service on port 5001
-    try {
+    if (process.env.NODE_ENV !== 'production') {
+      try {
       const fallbackForm = new FormData();
       fallbackForm.append('image', idFile.buffer, {
         filename: idFile.originalname || `id${path.extname(idFile.originalname || '.jpg')}`,
@@ -220,14 +229,22 @@ async function validateIdImage(idFile) {
         };
       }
       return { ok: true, ai: fallbackResult };
-    } catch (err2) {
-      return {
-        ok: false,
-        status: 503,
-        msg: 'AI ID verification service is unavailable. Please try again shortly.',
-        error: err?.message || err2?.message || 'AI request failed'
-      };
+      } catch (err2) {
+        return {
+          ok: false,
+          status: 503,
+          msg: 'AI ID verification service is unavailable. Please try again shortly.',
+          error: err?.message || err2?.message || 'AI request failed'
+        };
+      }
     }
+
+    return {
+      ok: false,
+      status: 503,
+      msg: 'AI ID verification service is unavailable. Please try again shortly.',
+      error: err?.response?.data?.error || err?.message || 'AI request failed'
+    };
   }
 }
 
@@ -362,7 +379,7 @@ async function generateFaceEmbeddingFromFile(file) {
 
   const requestConfig = {
     headers: { ...formData.getHeaders() },
-    timeout: 60000
+    timeout: 120000
   };
 
   try {
@@ -373,16 +390,23 @@ async function generateFaceEmbeddingFromFile(file) {
     }
     return embedding;
   } catch (primaryError) {
-    try {
+    if (process.env.NODE_ENV !== 'production') {
+      try {
       const fallbackResponse = await axios.post('http://127.0.0.1:5001/generate-embedding', formData, requestConfig);
       const fallbackEmbedding = fallbackResponse?.data?.embedding;
       if (!Array.isArray(fallbackEmbedding) || !fallbackEmbedding.length) {
         throw new Error('Fallback AI embedding service returned no embedding.');
       }
       return fallbackEmbedding;
-    } catch (fallbackError) {
-      throw new Error(primaryError?.message || fallbackError?.message || 'AI embedding generation failed.');
+      } catch (fallbackError) {
+        throw new Error(primaryError?.message || fallbackError?.message || 'AI embedding generation failed.');
+      }
     }
+    throw new Error(
+      primaryError?.response?.data?.error ||
+      primaryError?.message ||
+      'AI embedding generation failed.'
+    );
   }
 }
 
