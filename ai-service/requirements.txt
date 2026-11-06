@@ -1,10 +1,15 @@
 flask==3.0.3
 flask-cors==4.0.1
-# numpy must stay below 2 for the pinned mediapipe build to import; otherwise the
-# detector silently falls back to the weak Haar cascade.
+# Python 3.11 is pinned via /.python-version and ai-service/.python-version.
+# numpy must stay below 2: this OpenCV build was compiled against numpy 1.x, and
+# numpy 1.26 supports Python 3.9-3.12 only.
 numpy==1.26.4
+# OpenCV 4.10 ships the bundled Haar cascade. Never leave this unpinned: OpenCV 5.x
+# no longer bundles it, so cascade.empty() became true and every face request 500'd.
 opencv-python-headless==4.10.0.84
-mediapipe==0.10.14
+# mediapipe is intentionally NOT installed. It hard-depends on opencv-contrib-python
+# (the GUI build), which needs libGL.so.1 on headless Linux and can overwrite the
+# pinned headless OpenCV. The service falls back to the OpenCV Haar detector.
 requests==2.32.3
 gunicorn==22.0.0
 # Optional: faiss-cpu can be installed for faster vector search. Install only on supported Linux platforms.

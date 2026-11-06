@@ -295,7 +295,7 @@ router.post('/google-public', async (req, res) => {
 
     const idToken = String(req.body.idToken || '').trim();
     if (!idToken) {
-      return res.status(400).json({ msg: 'Google sign-in token is required.' });
+      return res.status(400).json({ msg: 'Google sign-in token is required.', code: 'google_token_missing' });
     }
 
     const decoded = await admin.auth().verifyIdToken(idToken, true);
@@ -303,14 +303,26 @@ router.post('/google-public', async (req, res) => {
     const firebaseUser = await admin.auth().getUser(decoded.uid);
     const tokenEmail = normalizeEmail(decoded.email);
     const verifiedEmail = normalizeEmail(firebaseUser.email);
-    const submittedEmail = normalizeEmail(req.body.email);
     const normalizedEmail = verifiedEmail || tokenEmail;
-    if (submittedEmail && verifiedEmail && submittedEmail !== verifiedEmail) {
-      return res.status(400).json({ msg: 'Google account verification failed. Please try again.' });
+
+    // The email the browser sent is untrusted and only informational. Comparing it against
+    // the verified token email used to hard-fail with a 400 whenever the cached client user
+    // object was stale or partially populated, so the verified ID token is now the single
+    // source of truth and the client value is never used to authorise anything.
+    if (!decoded.email_verified && normalizedEmail) {
+      console.warn('[auth] Google account email is not marked verified:', normalizedEmail);
     }
+
     if (!isGoogleAuthEmailAllowed(normalizedEmail)) {
+      console.warn('[auth] Google sign-in rejected: no usable email address.', {
+        uid: decoded.uid || null,
+        hasTokenEmail: Boolean(tokenEmail),
+        hasRecordEmail: Boolean(verifiedEmail),
+        signInProvider: (decoded.firebase && decoded.firebase.sign_in_provider) || null
+      });
       return res.status(400).json({
-        msg: 'Google did not provide a valid email address. Ensure you signed in with a Google account and try again.'
+        msg: 'Google sign-in did not return an email address. Sign in with a Google account that has a verified email, or use email and password.',
+        code: 'google_email_missing'
       });
     }
 

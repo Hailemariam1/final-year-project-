@@ -48,7 +48,7 @@ def _init_optional_models():
         face_app = None
 
     try:
-        import mediapipe as mp  # type: ignore  # optional at runtime, pinned in requirements.txt
+        import mediapipe as mp  # type: ignore  # optional; not installed by default (see requirements.txt)
         HAS_MEDIAPIPE = True
         mp_face = mp.solutions.face_detection
     except Exception:

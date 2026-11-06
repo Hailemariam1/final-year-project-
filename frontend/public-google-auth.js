@@ -107,7 +107,8 @@
         }
 
         if (!response.ok) {
-            throw new Error(data.msg || data.error || 'Google sign-in failed');
+            const reason = data.msg || data.error || 'Google sign-in failed';
+            throw new Error(data.code ? `${reason} (${data.code})` : reason);
         }
 
         if (!data.token) {

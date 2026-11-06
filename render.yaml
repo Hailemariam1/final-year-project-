@@ -39,5 +39,5 @@ services:
     startCommand: gunicorn --bind 0.0.0.0:$PORT --timeout 300 --workers 1 --threads 4 --access-logfile - app:app
     envVars:
       - key: PYTHON_VERSION
-        value: 3.10.13
+        value: 3.11.11
     plan: free # Note: AI models might be heavy for free tier, but good for starting
