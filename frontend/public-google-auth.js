@@ -61,6 +61,11 @@
         const firebaseApp = ensureFirebaseInitialized();
         const auth = firebaseApp.auth();
         const provider = new firebaseApp.auth.GoogleAuthProvider();
+        // Ask for the email scope explicitly. With only the provider's default 'profile'
+        // scope, Google returns no address, so the Firebase user and its ID token carry
+        // email = null and the backend rejected every sign-in with google_email_missing.
+        provider.addScope('email');
+        provider.addScope('profile');
         provider.setCustomParameters({ prompt: 'select_account' });
         if (firebaseApp.auth && firebaseApp.auth.Auth && firebaseApp.auth.Auth.Persistence) {
             await auth.setPersistence(firebaseApp.auth.Auth.Persistence.LOCAL);
