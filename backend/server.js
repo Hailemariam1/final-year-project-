@@ -28,6 +28,7 @@ app.use(cors({
     },
     credentials: true
 }));
+app.options('*', cors());
 app.use(express.json());
 
 // Initializes Firebase Admin via service module env vars. haile i have to do this here to avoid circular dependency with store which also imports admin
@@ -56,6 +57,11 @@ app.get('/favicon.ico', (req, res) => {
 // Global Error Handler
 app.use((err, req, res, next) => {
     console.error(err.stack);
+    const requestOrigin = req.headers.origin;
+    if (requestOrigin && allowedOrigins.includes(requestOrigin)) {
+        res.header('Access-Control-Allow-Origin', requestOrigin);
+        res.header('Access-Control-Allow-Credentials', 'true');
+    }
     res.status(500).json({ msg: err.message || 'Server Error' });
 });
 

@@ -673,7 +673,16 @@ router.post('/search/image', handleImageUpload, async (req, res) => {
     });
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ msg: err.message || 'Image search failed.' });
+    const upstreamError = err?.response?.data?.error || err?.response?.data?.msg;
+    const isAiFailure = Boolean(upstreamError) ||
+      String(err?.code || '').includes('TIMEOUT') ||
+      String(err?.message || '').toLowerCase().includes('timeout') ||
+      String(err?.message || '').toLowerCase().includes('ai');
+    return res.status(isAiFailure ? 503 : 500).json({
+      msg: isAiFailure
+        ? 'The AI image-search service is unavailable. Please try again in a moment.'
+        : (err.message || 'Image search failed.')
+    });
   }
 });
 
