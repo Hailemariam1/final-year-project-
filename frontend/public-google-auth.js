@@ -127,7 +127,7 @@
                 }
 
                 window.setTimeout(() => {
-                    window.location.href = data.redirectPath || '/user/dashboard.html';
+                    window.location.href = '/index.html';
                 }, 700);
             } catch (err) {
                 if (typeof window.showToast === 'function') {
@@ -211,7 +211,7 @@
             if (result && typeof window.showToast === 'function') {
                 window.showToast('Google sign-in successful!', 'success');
                 window.setTimeout(() => {
-                    window.location.href = result.redirectPath || '/user/dashboard.html';
+                    window.location.href = '/index.html';
                 }, 700);
             }
         } catch (err) {
