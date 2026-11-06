@@ -65,6 +65,9 @@
         if (!user) return null;
 
         const idToken = await user.getIdToken(true);
+        if (!idToken) {
+            throw new Error('Google sign-in did not return an ID token. Please try again.');
+        }
         const response = await fetch(`${API_URL}/auth/google-public`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

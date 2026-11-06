@@ -274,9 +274,12 @@ router.post('/google-public', async (req, res) => {
 
     const decoded = await admin.auth().verifyIdToken(idToken, true);
 
-    const normalizedEmail = normalizeEmail(decoded.email);
+    const identityEmails = decoded.firebase?.identities?.google || [];
+    const normalizedEmail = normalizeEmail(decoded.email || identityEmails[0]);
     if (!isGoogleAuthEmailAllowed(normalizedEmail)) {
-      return res.status(400).json({ msg: 'A valid email address is required from Google sign-in.' });
+      return res.status(400).json({
+        msg: 'Google did not provide a valid email address. Ensure you signed in with a Google account and try again.'
+      });
     }
 
     const existing = await findBestGoogleUser(normalizedEmail, decoded.uid);
