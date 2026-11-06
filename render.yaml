@@ -20,12 +20,9 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: FRONTEND_URL
-        value: https://missingpersonfinder.netlify.app
+        value: https://final-year-project-frontend-silk.vercel.app
       - key: AI_SERVICE_URL
-        fromService:
-          type: web
-          name: missing-person-ai-service
-          property: url
+        value: https://final-year-project-0joz.onrender.com
 
   # AI Service (Python)
   - type: web

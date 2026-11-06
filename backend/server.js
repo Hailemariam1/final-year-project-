@@ -7,9 +7,11 @@ dotenv.config();
 const app = express();
 
 // Middleware
-const frontendOrigin = process.env.FRONTEND_URL || 'https://missingpersonfinder-beryl.vercel.app';
+const frontendOrigin = (process.env.FRONTEND_URL || 'https://final-year-project-frontend-silk.vercel.app')
+    .replace(/\/+$/, '');
 const allowedOrigins = [
     frontendOrigin,
+    'https://final-year-project-frontend-silk.vercel.app',
     'https://missingpersonfinder-beryl.vercel.app'
 ].filter(Boolean);
 

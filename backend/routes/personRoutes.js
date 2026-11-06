@@ -8,7 +8,7 @@ const FormData = require('form-data');
 const sendEmail = require('../utils/sendEmail');
 const store = require('../services/firebaseStore');
 
-const DEFAULT_AI_SERVICE_URL = 'https://final-year-project-k7vn.onrender.com';
+const DEFAULT_AI_SERVICE_URL = 'https://final-year-project-0joz.onrender.com';
 const AI_SERVICE_URL = (process.env.AI_SERVICE_URL || DEFAULT_AI_SERVICE_URL).replace(/\/+$|^\s+|\s+$/g, '');
 
 // Duplicate detection thresholds

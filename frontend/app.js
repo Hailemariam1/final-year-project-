@@ -1,6 +1,6 @@
 // Update these two production URLs after deploying backend/AI services.
-const PROD_BACKEND_ORIGIN = 'https://missing-person-backend-vwmy.onrender.com';
-const PROD_AI_ORIGIN = 'https://final-year-project-k7vn.onrender.com';
+const PROD_BACKEND_ORIGIN = 'https://final-year-project-1-f1cu.onrender.com';
+const PROD_AI_ORIGIN = 'https://final-year-project-0joz.onrender.com';
 
 const BACKEND_ORIGIN = PROD_BACKEND_ORIGIN;
 const AI_URL = PROD_AI_ORIGIN;

@@ -2,7 +2,16 @@ const admin = require('firebase-admin');
 const { randomUUID } = require('crypto');
 
 function normalizePrivateKey(value = '') {
-  return value.replace(/\\n/g, '\n');
+  let key = String(value).trim();
+
+  if (
+    (key.startsWith('"') && key.endsWith('"')) ||
+    (key.startsWith("'") && key.endsWith("'"))
+  ) {
+    key = key.slice(1, -1);
+  }
+
+  return key.replace(/\\n/g, '\n').replace(/\r\n/g, '\n').trim();
 }
 
 function getFirebaseConfig() {
